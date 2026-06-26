@@ -1,9 +1,6 @@
-import numpy as np
 import torch.nn as nn
-from scipy.stats import wasserstein_distance
 from torch.nn.functional import normalize
 import torch
-import torch.nn.functional as F
 
 
 class Encoder(nn.Module):
@@ -88,12 +85,14 @@ class Network(nn.Module):
         return S_weight,S
 
     def compute_view_value(self,zs):
-        w = np.zeros((self.view,self.view))
+        normalized_zs = [normalize(z, dim=1).flatten() for z in zs]
+        w = torch.empty((self.view, self.view), device=zs[0].device, dtype=zs[0].dtype)
         for i in range(self.view):
-            zs[i] = normalize(zs[i],dim=1)
-        for i in range(self.view):
+            zi = torch.sort(normalized_zs[i]).values
             for j in range(i, self.view):
-                w[i][j] = (torch.exp(-torch.tensor(wasserstein_distance(zs[i].cpu().numpy().flatten(), zs[j].cpu().numpy().flatten()))))
-                w[j][i] = w[i][j]
-        w = w / w.sum(axis=1)
-        return w.squeeze()
+                zj = torch.sort(normalized_zs[j]).values
+                distance = torch.mean(torch.abs(zi - zj))
+                value = torch.exp(-distance)
+                w[i][j] = value
+                w[j][i] = value
+        return w / w.sum(dim=1, keepdim=True)

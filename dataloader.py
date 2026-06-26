@@ -4,6 +4,7 @@ import numpy as np
 from torch.utils.data import Dataset
 import scipy.io
 import torch
+import os
 
 
 class BDGP(Dataset):
@@ -384,7 +385,20 @@ class YouTubeVideo(Dataset):
 
 
 
-def load_data(dataset):
+def load_data(dataset, data_dir='./data/'):
+    generic_path = os.path.join(data_dir, dataset)
+    if not generic_path.endswith(".mat"):
+        generic_path = generic_path + ".mat"
+    if data_dir != './data/' and os.path.exists(generic_path):
+        generic_dataset = GenericMatDataset(generic_path)
+        return (
+            generic_dataset,
+            generic_dataset.dims,
+            generic_dataset.view_count,
+            len(generic_dataset),
+            generic_dataset.class_count,
+        )
+
     if dataset == "BDGP":
         dataset = BDGP('./data/')
         dims = [1750, 79]
@@ -527,3 +541,149 @@ def load_data(dataset):
     else:
         raise NotImplementedError
     return dataset, dims, view, data_size, class_num
+def _to_2d_float_array(value):
+    array = np.asarray(value)
+    if array.ndim == 1:
+        array = array.reshape(array.shape[0], 1)
+    elif array.ndim > 2:
+        array = array.reshape(array.shape[0], -1)
+    return array.astype(np.float32)
+
+
+def _extract_cell_views(cell):
+    views = []
+    for item in np.asarray(cell).ravel():
+        view = _to_2d_float_array(item)
+        views.append(view)
+    return views
+
+
+def _extract_labels(mat):
+    for key in ("Y", "y", "gt", "truth", "truelabel", "gnd", "labels", "label"):
+        if key not in mat:
+            continue
+        labels = mat[key]
+        if labels.dtype == object:
+            candidates = [np.asarray(item) for item in np.asarray(labels).ravel()]
+            labels = max(candidates, key=lambda item: item.size)
+        labels = np.asarray(labels)
+        if labels.ndim == 2 and labels.shape[0] > 1 and labels.shape[1] > 1:
+            labels = labels.argmax(axis=1)
+        labels = labels.reshape(-1).astype(np.int64)
+        return labels
+    raise ValueError("No supported label key found")
+
+
+def _hdf5_array(file_handle, value):
+    import h5py
+
+    if isinstance(value, h5py.Reference):
+        value = file_handle[value]
+    if isinstance(value, h5py.Dataset):
+        value = value[()]
+    return np.asarray(value)
+
+
+def _extract_hdf5_cell_views(file_handle, cell):
+    views = []
+    for item in np.asarray(cell).ravel():
+        view = _hdf5_array(file_handle, item)
+        views.append(_to_2d_float_array(view))
+    return views
+
+
+def _extract_hdf5_labels(file_handle):
+    for key in ("Y", "y", "gt", "truth", "truelabel", "gnd", "labels", "label"):
+        if key not in file_handle:
+            continue
+        labels = _hdf5_array(file_handle, file_handle[key])
+        if labels.dtype == object:
+            candidates = [_hdf5_array(file_handle, item) for item in labels.ravel()]
+            labels = max(candidates, key=lambda item: item.size)
+        if labels.ndim == 2 and labels.shape[0] > 1 and labels.shape[1] > 1:
+            labels = labels.argmax(axis=1)
+        return labels.reshape(-1).astype(np.int64)
+    raise ValueError("No supported label key found")
+
+
+def _load_hdf5_mat(path):
+    import h5py
+
+    with h5py.File(path, "r") as mat:
+        views = None
+        for key in ("X", "fea", "data"):
+            if key in mat:
+                views = _extract_hdf5_cell_views(mat, mat[key])
+                break
+        if views is None:
+            if "image_features" in mat and "class_text_features" in mat and "desc_text_features" in mat:
+                views = [
+                    _to_2d_float_array(mat["image_features"][()]),
+                    _to_2d_float_array(mat["class_text_features"][()]),
+                    _to_2d_float_array(mat["desc_text_features"][()]),
+                ]
+            else:
+                raise ValueError("No supported multi-view feature key found")
+        labels = _extract_hdf5_labels(mat)
+    return views, labels
+
+
+class GenericMatDataset(Dataset):
+    def __init__(self, path):
+        try:
+            mat = scipy.io.loadmat(path)
+        except NotImplementedError as exc:
+            if "v7.3" not in str(exc) and "HDF" not in str(exc):
+                raise
+            views, labels = _load_hdf5_mat(path)
+        else:
+            views = None
+            for key in ("X", "fea", "data"):
+                if key in mat and mat[key].dtype == object:
+                    views = _extract_cell_views(mat[key])
+                    break
+            if views is None:
+                if "image_features" in mat and "class_text_features" in mat and "desc_text_features" in mat:
+                    views = [
+                        _to_2d_float_array(mat["image_features"]),
+                        _to_2d_float_array(mat["class_text_features"]),
+                        _to_2d_float_array(mat["desc_text_features"]),
+                    ]
+                else:
+                    raise ValueError("No supported multi-view feature key found")
+            labels = _extract_labels(mat)
+        sample_count = labels.shape[0]
+        fixed_views = []
+        scaler = MinMaxScaler()
+        for view in views:
+            if view.shape[0] != sample_count and view.shape[1] == sample_count:
+                view = view.T
+            if view.shape[0] != sample_count:
+                raise ValueError(
+                    "View sample count {} does not match labels {}".format(view.shape[0], sample_count)
+                )
+            view = scaler.fit_transform(view.astype(np.float32))
+            fixed_views.append(np.ascontiguousarray(view.astype(np.float32)))
+        if len(fixed_views) < 2:
+            raise ValueError("Need at least two views")
+
+        self.views = fixed_views
+        self.y = labels
+
+    def __len__(self):
+        return self.y.shape[0]
+
+    def __getitem__(self, idx):
+        return [torch.from_numpy(view[idx]) for view in self.views], self.y[idx], torch.from_numpy(np.array(idx)).long()
+
+    @property
+    def dims(self):
+        return [view.shape[1] for view in self.views]
+
+    @property
+    def view_count(self):
+        return len(self.views)
+
+    @property
+    def class_count(self):
+        return int(np.unique(self.y).shape[0])
