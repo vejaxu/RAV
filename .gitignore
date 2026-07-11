@@ -3,3 +3,5 @@ __pycache__/
 
 .omx/
 results/
+results_best_repeats/
+results_best_repeats_gpu/
