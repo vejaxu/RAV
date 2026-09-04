@@ -6,6 +6,8 @@ import sys
 import time
 from datetime import datetime
 
+from label_outputs import materialize_labels, materialize_row_labels
+
 
 TARGET_DATASETS = [
     "ORL",
@@ -106,6 +108,12 @@ def run_repeat(args, dataset, best_row, seed):
     param_group = best_row["ParamGroup"]
     final_path = os.path.join(repeat_output_dir, dataset, param_group, "final_metrics.csv")
     metrics = read_single_final_metrics(final_path)
+    labels_path = materialize_labels(
+        os.path.join(os.path.dirname(final_path), "labels.csv"),
+        args.output_dir,
+        dataset,
+        seed,
+    )
     return {
         "created_at": datetime.now().isoformat(timespec="seconds"),
         "dataset": dataset,
@@ -119,18 +127,19 @@ def run_repeat(args, dataset, best_row, seed):
         "acc": float(metrics["acc"]),
         "pur": float(metrics["pur"]),
         "runtime_seconds": elapsed,
+        "labels_path": labels_path,
         "result_dir": os.path.dirname(final_path),
         "log_path": log_path,
     }
 
 
-def summarize(rows):
+def summarize(rows, dataset_order):
     by_dataset = {}
     for row in rows:
         by_dataset.setdefault(row["dataset"], []).append(row)
 
     summaries = []
-    for dataset in TARGET_DATASETS:
+    for dataset in dataset_order:
         dataset_rows = by_dataset.get(dataset, [])
         if not dataset_rows:
             continue
@@ -156,11 +165,11 @@ def summarize(rows):
     return summaries
 
 
-def existing_rows(path):
+def existing_rows(path, output_dir):
     if not os.path.exists(path):
         return []
     with open(path, newline="") as f:
-        return list(csv.DictReader(f))
+        return [materialize_row_labels(row, output_dir) for row in csv.DictReader(f)]
 
 
 def main():
@@ -191,7 +200,8 @@ def main():
 
     repeat_fields = [
         "created_at", "dataset", "seed", "best_lambda", "best_beta", "param_group",
-        "nmi", "ari", "f1", "acc", "pur", "runtime_seconds", "result_dir", "log_path",
+        "nmi", "ari", "f1", "acc", "pur", "runtime_seconds", "labels_path",
+        "result_dir", "log_path",
     ]
     summary_fields = [
         "dataset", "runs", "best_lambda", "best_beta", "param_group",
@@ -199,9 +209,11 @@ def main():
         "runtime_seconds_mean", "runtime_seconds_std",
     ]
 
-    rows = existing_rows(repeat_csv) if args.resume else []
+    rows = existing_rows(repeat_csv, args.output_dir) if args.resume else []
     completed = {(row["dataset"], int(row["seed"])) for row in rows}
-    if not args.resume:
+    if args.resume:
+        write_csv(repeat_csv, repeat_fields, rows)
+    else:
         for path in (repeat_csv, summary_csv):
             if os.path.exists(path):
                 os.remove(path)
@@ -215,7 +227,7 @@ def main():
             row = run_repeat(args, dataset, best_rows[dataset], seed)
             append_csv(repeat_csv, repeat_fields, row)
             rows.append(row)
-            write_csv(summary_csv, summary_fields, summarize(rows))
+            write_csv(summary_csv, summary_fields, summarize(rows, datasets))
             print(
                 "DONE {} seed {} NMI {:.4f} ARI {:.4f} F1 {:.4f} time {:.2f}s".format(
                     dataset, seed, row["nmi"], row["ari"], row["f1"], row["runtime_seconds"]
@@ -223,7 +235,7 @@ def main():
                 flush=True,
             )
 
-    write_csv(summary_csv, summary_fields, summarize(rows))
+    write_csv(summary_csv, summary_fields, summarize(rows, datasets))
     print("Wrote {}".format(summary_csv), flush=True)
 
 

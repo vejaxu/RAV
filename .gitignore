@@ -1,7 +1,27 @@
+# Python caches and test artifacts
 __pycache__/
 *.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
 
+# Local orchestration state
 .omx/
-results/
-results_best_repeats/
-results_best_repeats_gpu/
+
+# Editors and operating-system metadata
+.idea/
+.vscode/
+.DS_Store
+__MACOSX/
+
+# Generated experiment artifacts
+results*/
+models/
+*.log
+*.pth
+*.pt
+
+# Source archives are redundant with Git history
+*.zip

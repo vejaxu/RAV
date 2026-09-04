@@ -1,6 +1,4 @@
-import pandas as pd
 from sklearn.metrics import normalized_mutual_info_score, adjusted_rand_score, accuracy_score, f1_score
-from sklearn.cluster import KMeans
 from scipy.optimize import linear_sum_assignment
 from torch.utils.data import DataLoader
 import numpy as np
@@ -108,7 +106,7 @@ def inference(loader, model, device, view, data_size):
 def valid(model, device, dataset, view, data_size, class_num, eval_h=False, return_labels=False):
     test_loader = DataLoader(
             dataset,
-            batch_size=data_size, #256
+            batch_size=data_size,
             shuffle=False,
         )
     total_pred, pred_vectors, labels_vector = inference(test_loader, model, device, view, data_size)
@@ -118,5 +116,3 @@ def valid(model, device, dataset, view, data_size, class_num, eval_h=False, retu
     if return_labels:
         return nmi, ari, f1, acc, pur, labels_vector, total_pred, aligned_pred
     return nmi, ari, f1, acc, pur
-
-

@@ -3,6 +3,8 @@ import csv
 import glob
 import os
 
+from label_outputs import materialize_row_labels
+
 
 DATASET_ORDER = [
     "ORL",
@@ -23,7 +25,7 @@ DATASET_ORDER = [
 ]
 
 
-def read_rows(paths):
+def read_rows(paths, output_dir):
     rows = []
     for path in paths:
         if not os.path.exists(path):
@@ -31,6 +33,7 @@ def read_rows(paths):
         with open(path, newline="") as f:
             for row in csv.DictReader(f):
                 row["source_csv"] = path
+                materialize_row_labels(row, output_dir)
                 rows.append(row)
     return rows
 
@@ -85,13 +88,13 @@ def main():
         glob.glob(os.path.join(args.root, "shards", "*", "repeat_metrics.csv"))
         + glob.glob(os.path.join(args.root, "shards", "*", "seed_*", "repeat_metrics.csv"))
     )
-    rows = read_rows(repeat_paths)
+    rows = read_rows(repeat_paths, args.root)
     rows = sorted(rows, key=lambda row: (DATASET_ORDER.index(row["dataset"]), int(row["seed"])))
 
     repeat_fields = [
         "created_at", "dataset", "seed", "best_lambda", "best_beta", "param_group",
-        "nmi", "ari", "f1", "acc", "pur", "runtime_seconds", "result_dir", "log_path",
-        "source_csv",
+        "nmi", "ari", "f1", "acc", "pur", "runtime_seconds", "labels_path",
+        "result_dir", "log_path", "source_csv",
     ]
     summary_fields = [
         "dataset", "runs", "best_lambda", "best_beta", "param_group",

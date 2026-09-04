@@ -213,7 +213,6 @@ def run_param(args, dataset, dims, view, data_size, class_num, lmd, beta):
         "pur": pur,
         "model_path": model_path,
     }
-    write_csv(final_path, final_fields, [row])
     write_csv(
         os.path.join(result_dir, "labels.csv"),
         ["index", "label", "pred", "aligned_pred"],
@@ -222,6 +221,9 @@ def run_param(args, dataset, dims, view, data_size, class_num, lmd, beta):
             for idx in range(labels.shape[0])
         ],
     )
+    # final_metrics.csv is the resume marker, so write it only after every
+    # required per-run artifact has been persisted successfully.
+    write_csv(final_path, final_fields, [row])
     return {
         "Datasets": args.dataset,
         "Points": data_size,

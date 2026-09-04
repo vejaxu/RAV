@@ -7,6 +7,8 @@ import sys
 import time
 from datetime import datetime
 
+from label_outputs import materialize_row_labels
+
 
 DATASETS = [
     "ORL",
@@ -42,7 +44,7 @@ def write_csv(path, fieldnames, rows):
         writer.writerows(rows)
 
 
-def collect_repeat_rows(root):
+def collect_repeat_rows(root, dataset_order):
     paths = sorted(
         glob.glob(os.path.join(root, "shards", "*", "repeat_metrics.csv"))
         + glob.glob(os.path.join(root, "shards", "*", "seed_*", "repeat_metrics.csv"))
@@ -51,17 +53,19 @@ def collect_repeat_rows(root):
     for path in paths:
         for row in read_csv_rows(path):
             row["source_csv"] = path
+            materialize_row_labels(row, root)
             rows.append(row)
-    return sorted(rows, key=lambda row: (DATASETS.index(row["dataset"]), int(row["seed"])))
+    order = {dataset: index for index, dataset in enumerate(dataset_order)}
+    return sorted(rows, key=lambda row: (order[row["dataset"]], int(row["seed"])))
 
 
-def summarize(rows):
+def summarize(rows, dataset_order):
     by_dataset = {}
     for row in rows:
         by_dataset.setdefault(row["dataset"], []).append(row)
 
     summaries = []
-    for dataset in DATASETS:
+    for dataset in dataset_order:
         dataset_rows = by_dataset.get(dataset, [])
         if not dataset_rows:
             continue
@@ -88,12 +92,12 @@ def summarize(rows):
     return summaries
 
 
-def refresh_merged_outputs(root):
-    rows = collect_repeat_rows(root)
+def refresh_merged_outputs(root, dataset_order):
+    rows = collect_repeat_rows(root, dataset_order)
     repeat_fields = [
         "created_at", "dataset", "seed", "best_lambda", "best_beta", "param_group",
-        "nmi", "ari", "f1", "acc", "pur", "runtime_seconds", "result_dir", "log_path",
-        "source_csv",
+        "nmi", "ari", "f1", "acc", "pur", "runtime_seconds", "labels_path",
+        "result_dir", "log_path", "source_csv",
     ]
     summary_fields = [
         "dataset", "runs", "best_lambda", "best_beta", "param_group",
@@ -101,7 +105,7 @@ def refresh_merged_outputs(root):
         "runtime_seconds_mean", "runtime_seconds_std",
     ]
     write_csv(os.path.join(root, "repeat_metrics.csv"), repeat_fields, rows)
-    write_csv(os.path.join(root, "summary_mean_std.csv"), summary_fields, summarize(rows))
+    write_csv(os.path.join(root, "summary_mean_std.csv"), summary_fields, summarize(rows, dataset_order))
 
 
 def launch_seed(args, dataset, seed, gpu):
@@ -168,7 +172,12 @@ def run_dataset(args, dataset, seeds, gpus):
 
     if failures:
         for seed, gpu, code, log_path in failures:
-            print("Failure detail: dataset={} seed={} gpu={} code={} log={}".format(dataset, seed, gpu, code, log_path), flush=True)
+            print(
+                "Failure detail: dataset={} seed={} gpu={} code={} log={}".format(
+                    dataset, seed, gpu, code, log_path
+                ),
+                flush=True,
+            )
         raise RuntimeError("{} failed for {} seed run(s)".format(dataset, len(failures)))
 
 
@@ -197,10 +206,10 @@ def main():
     for dataset in datasets:
         print("DATASET START {}".format(dataset), flush=True)
         run_dataset(args, dataset, seeds, gpus)
-        refresh_merged_outputs(args.output_dir)
+        refresh_merged_outputs(args.output_dir, datasets)
         print("DATASET DONE {}".format(dataset), flush=True)
 
-    refresh_merged_outputs(args.output_dir)
+    refresh_merged_outputs(args.output_dir, datasets)
     print("Wrote {}".format(os.path.join(args.output_dir, "summary_mean_std.csv")), flush=True)
 
 
